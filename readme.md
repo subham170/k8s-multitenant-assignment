@@ -9,7 +9,7 @@ Example tenants:
 * Customer A → Team RCB
 * Customer B → Team RR
 
-### Requirements:
+### Requirements
 
 * Tenants must work independently
 * Isolation must be ensured using namespaces
@@ -25,12 +25,39 @@ We implemented a **multi-tenant architecture** using:
 * Kubernetes as the underlying orchestration platform
 * Kubeflow Pipelines for ML workflow execution
 * Kubernetes namespaces for tenant isolation
+* RBAC roles and resource quotas per tenant for access control and fair usage
 
 Each tenant is assigned a dedicated namespace within a shared Kubernetes cluster, ensuring logical isolation while maintaining efficient resource utilization.
 
 ---
 
-## 3. Architecture
+## 3. Repository Structure
+
+```
+kubeflow-multitenant/
+├── pipelines/                 # Kubeflow pipeline definitions (Python + compiled YAML)
+│   ├── rcb_pipeline.py
+│   ├── rcb_pipeline.yaml
+│   ├── rr_pipeline.py
+│   └── rr_pipeline.yaml
+├── setup/                     # Cluster and namespace bootstrap
+│   ├── kind-config.yaml       # Kind cluster (control-plane + worker, Kubernetes v1.29.4)
+│   └── namespaces.yaml        # Tenant namespaces: rcb, rr
+├── security/                  # Per-tenant RBAC and resource quotas
+│   ├── rcb-role.yaml
+│   ├── rcb-rolebinding.yaml
+│   ├── rr-role.yaml
+│   ├── rr-rolebinding.yaml
+│   ├── resource-quota-rcb.yaml
+│   └── resource-quota-rr.yaml
+├── requirements.txt           # Python deps (kfp 2.16.0, kubernetes, etc.)
+├── .gitignore
+└── readme.md
+```
+
+---
+
+## 4. Architecture
 
 ### High-Level Architecture
 
@@ -39,10 +66,14 @@ Kubernetes Cluster (Shared)
 │
 ├── Namespace: rcb
 │   ├── RCB Pipeline
+│   ├── RBAC (rcb-user → rcb-role)
+│   ├── ResourceQuota (tenant-quota)
 │   └── Pods (Pipeline Execution)
 │
 ├── Namespace: rr
 │   ├── RR Pipeline
+│   ├── RBAC (rr-user → rr-role)
+│   ├── ResourceQuota (tenant-quota)
 │   └── Pods (Pipeline Execution)
 │
 └── Namespace: kubeflow
@@ -53,38 +84,52 @@ Kubernetes Cluster (Shared)
 
 ---
 
-## 4. Key Components
+## 5. Key Components
 
-### 4.1 Kubernetes
+### 5.1 Kubernetes
 
 * Provides container orchestration
 * Manages pods, scheduling, and resource allocation
 * Enables namespace-based isolation
 
----
-
-### 4.2 Kubeflow Pipelines
+### 5.2 Kubeflow Pipelines
 
 * Used to define and execute ML workflows
 * Converts Python-based pipeline definitions into Kubernetes workloads
 * Executes each pipeline step as a Kubernetes pod
 
+### 5.3 Namespaces (Core of Multi-Tenancy)
+
+* `rcb` → Customer A (Team RCB)
+* `rr` → Customer B (Team RR)
+
+Namespaces provide logical isolation, separate resource visibility, and independent execution environments.
+
+### 5.4 RBAC
+
+Per-tenant `Role` and `RoleBinding` manifests in `security/` grant namespace-scoped access:
+
+| Tenant | Kubernetes user | Role        |
+|--------|-----------------|-------------|
+| RCB    | `rcb-user`      | `rcb-role`  |
+| RR     | `rr-user`       | `rr-role`   |
+
+Each role allows `get`, `list`, `watch`, `create`, and `delete` on `pods` and `services` within its namespace.
+
+### 5.5 Resource Quotas
+
+Each tenant namespace has a `ResourceQuota` (`tenant-quota`) limiting:
+
+| Resource           | Limit   |
+|--------------------|---------|
+| `requests.cpu`     | 2       |
+| `requests.memory`  | 2Gi     |
+| `limits.cpu`       | 4       |
+| `limits.memory`    | 4Gi     |
+
 ---
 
-### 4.3 Namespaces (Core of Multi-Tenancy)
-
-* `rcb` → Customer A
-* `rr` → Customer B
-
-Namespaces provide:
-
-* Logical isolation
-* Separate resource visibility
-* Independent execution environments
-
----
-
-## 5. Pipeline Execution Flow
+## 6. Pipeline Execution Flow
 
 ```
 User → Kubeflow UI → Pipeline Submission
@@ -102,126 +147,142 @@ Logs & Results Available
 
 ---
 
-## 6. Multi-Tenancy Strategy
+## 7. Getting Started
 
-Multi-tenancy is achieved using **Kubernetes namespaces**.
+### Prerequisites
 
-### Isolation Mechanism:
+* [Docker](https://docs.docker.com/get-docker/)
+* [Kind](https://kind.sigs.k8s.io/)
+* [kubectl](https://kubernetes.io/docs/tasks/tools/)
+* Python 3.x
+
+### 1. Create the cluster
+
+```bash
+kind create cluster --config setup/kind-config.yaml
+```
+
+### 2. Apply tenant namespaces
+
+```bash
+kubectl apply -f setup/namespaces.yaml
+```
+
+### 3. Apply security policies
+
+```bash
+kubectl apply -f security/
+```
+
+### 4. Install Python dependencies and compile pipelines
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+python pipelines/rcb_pipeline.py
+python pipelines/rr_pipeline.py
+```
+
+This regenerates `pipelines/rcb_pipeline.yaml` and `pipelines/rr_pipeline.yaml` from the Python definitions.
+
+### 5. Deploy Kubeflow Pipelines and run workloads
+
+Install Kubeflow Pipelines (standalone) on the cluster, port-forward to the UI, upload the compiled YAML artifacts, and submit runs per tenant namespace.
+
+---
+
+## 8. Pipelines
+
+| Pipeline       | Source                     | Compiled artifact              |
+|----------------|----------------------------|--------------------------------|
+| RCB pipeline   | `pipelines/rcb_pipeline.py` | `pipelines/rcb_pipeline.yaml` |
+| RR pipeline    | `pipelines/rr_pipeline.py`  | `pipelines/rr_pipeline.yaml`  |
+
+Each pipeline is a minimal KFP v2 workflow with a single component task. Recompile after editing the `.py` files:
+
+```bash
+python pipelines/rcb_pipeline.py
+python pipelines/rr_pipeline.py
+```
+
+---
+
+## 9. Multi-Tenancy Strategy
+
+Multi-tenancy is achieved using **Kubernetes namespaces**, reinforced with **RBAC** and **resource quotas**.
+
+### Isolation mechanism
 
 * Each tenant operates within its own namespace
 * Resources (pods, workloads) are scoped to namespaces
-* No direct visibility across namespaces
+* RBAC restricts API access to namespace-bound principals
+* Resource quotas cap CPU and memory per tenant
 
-### Benefits:
+### Benefits
 
 * Cost-efficient (shared cluster)
 * Scalable
-* Simple to implement
+* Access control and usage limits beyond namespace labels alone
 
 ---
 
-## 7. Implementation Details
+## 10. Isolation Demonstration
 
-### Step 1: Cluster Setup
+Verify isolation by listing pods per namespace:
 
-* Created a Kubernetes cluster using Kind
+```bash
+kubectl get pods -n rcb
+kubectl get pods -n rr
+```
 
-### Step 2: Namespace Creation
+Check quotas and RBAC:
 
-* Created separate namespaces for tenants:
-
-  * `rcb`
-  * `rr`
-
-### Step 3: Kubeflow Deployment
-
-* Installed Kubeflow Pipelines (standalone)
-* Accessed via port-forwarding
-
-### Step 4: Pipeline Creation
-
-* Developed two pipelines:
-
-  * RCB Pipeline
-  * RR Pipeline
-
-Each pipeline:
-
-* Defined using Python (KFP SDK)
-* Compiled into YAML
-* Uploaded and executed via UI
+```bash
+kubectl get resourcequota -n rcb
+kubectl get resourcequota -n rr
+kubectl get role,rolebinding -n rcb
+kubectl get role,rolebinding -n rr
+```
 
 ---
 
-## 8. Isolation Demonstration
+## 11. Trade-offs
 
-Isolation was verified by:
+### Advantages
 
-* Running workloads in separate namespaces
-* Listing pods using:
+* Efficient resource utilization on a shared cluster
+* Easy to add tenants (namespace + security manifests + pipeline)
+* RBAC and quotas improve fairness and access boundaries
 
-  ```
-  kubectl get pods -n rcb
-  kubectl get pods -n rr
-  ```
-* Ensuring no overlap in resources
+### Limitations
 
----
-
-## 9. Trade-offs
-
-### Advantages:
-
-* Efficient resource utilization
-* Easy scalability
-* Simple architecture
-
-### Limitations:
-
-* Namespace isolation is logical, not fully secure
-* Potential “noisy neighbor” issues
-* Limited resource guarantees without quotas
+* Namespace isolation is logical, not a hard security boundary
+* Potential “noisy neighbor” issues remain under heavy load
+* RBAC users (`rcb-user`, `rr-user`) must be wired to real auth (e.g. OIDC, client certs) in production
 
 ---
 
-## 10. Future Enhancements
+## 12. Future Enhancements
 
-### 10.1 RBAC (Role-Based Access Control)
-
-* Restrict access per tenant
-* Improve security
-
----
-
-### 10.2 KServe Integration
+### KServe integration
 
 * Deploy trained models as APIs
 * Enable real-time inference
 
----
-
-### 10.3 GPU Support
+### GPU support
 
 * Enable GPU-based workloads using Kubernetes device plugins
 * Allow pipelines to request GPU resources
 
----
+### Stronger tenancy
 
-### 10.4 Resource Quotas
-
-* Prevent resource starvation
-* Ensure fair usage across tenants
+* NetworkPolicies for traffic isolation between namespaces
+* LimitRanges and PodSecurity standards per tenant
 
 ---
 
-## 11. Conclusion
+## 13. Conclusion
 
-This project demonstrates a **multi-tenant Kubeflow platform** built on Kubernetes, where multiple customers can:
-
-* Share infrastructure
-* Run independent pipelines
-* Operate in isolated environments
-
-The solution balances **efficiency, scalability, and simplicity**, making it suitable for cloud-based ML platforms.
-
----
+This project demonstrates a **multi-tenant Kubeflow platform** on Kubernetes where multiple customers can share infrastructure, run independent pipelines, and operate in isolated namespaces with RBAC and resource quotas. The repository provides reproducible setup, security, and pipeline artifacts for two example tenants (RCB and RR).
