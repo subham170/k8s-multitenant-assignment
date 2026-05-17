@@ -10,4 +10,4 @@ def rcb_pipeline():
     rcb_task()
 
 if __name__ == "__main__":
-    compiler.Compiler().compile(rcb_pipeline, "rcb_pipeline.yaml")
+    compiler.Compiler().compile(rcb_pipeline, "pipelines/rcb_pipeline.yaml")

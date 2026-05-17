@@ -10,4 +10,4 @@ def rr_pipeline():
     rr_task()
 
 if __name__ == "__main__":
-    compiler.Compiler().compile(rr_pipeline, "rr_pipeline.yaml")
+    compiler.Compiler().compile(rr_pipeline, "pipelines/rr_pipeline.yaml")
