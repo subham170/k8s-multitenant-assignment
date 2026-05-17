@@ -3,7 +3,7 @@ from kfp import compiler
 
 @dsl.component
 def rr_task():
-    print("Hello from RR")
+    print("Hello from RR to qwerty")
 
 @dsl.pipeline(name="rr-pipeline")
 def rr_pipeline():

@@ -3,7 +3,7 @@ from kfp import compiler
 
 @dsl.component
 def rcb_task():
-    print("Hello from RCB , we are here")
+    print("Hello from RCB to Subham")
 
 @dsl.pipeline(name="rcb-pipeline")
 def rcb_pipeline():
